@@ -1,0 +1,7 @@
+torch
+transformers
+accelerate
+numpy
+pyyaml
+matplotlib
+pytest  # tests/ only; the pipeline and analysis never import it

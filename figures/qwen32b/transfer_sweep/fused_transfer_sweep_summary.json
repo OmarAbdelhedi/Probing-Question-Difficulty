@@ -1,0 +1,53 @@
+{
+  "kind": "fused_transfer_sweep",
+  "runs": [
+    "outputs/qwen32b/run_2wiki",
+    "outputs/qwen32b/run_hotpot",
+    "outputs/qwen32b/run_musique"
+  ],
+  "train_run_count": 2,
+  "folds": 5,
+  "seed": 0,
+  "top_k": 10,
+  "report_level": "diagnostics",
+  "plots_root": "figures/qwen32b/transfer_sweep",
+  "dry_run": false,
+  "jobs": [
+    {
+      "index": 1,
+      "label": "hotpot + musique -> 2wiki",
+      "train_outputs": [
+        "outputs/qwen32b/run_hotpot",
+        "outputs/qwen32b/run_musique"
+      ],
+      "test_output": "outputs/qwen32b/run_2wiki",
+      "plots_dir": "figures/qwen32b/transfer_sweep/transfer_musique_hotpot--2wiki",
+      "status": "ok",
+      "report_json": "figures/qwen32b/transfer_sweep/transfer_musique_hotpot--2wiki/fused_transfer_report.json"
+    },
+    {
+      "index": 2,
+      "label": "2wiki + musique -> hotpot",
+      "train_outputs": [
+        "outputs/qwen32b/run_2wiki",
+        "outputs/qwen32b/run_musique"
+      ],
+      "test_output": "outputs/qwen32b/run_hotpot",
+      "plots_dir": "figures/qwen32b/transfer_sweep/transfer_2wiki_musique--hotpot",
+      "status": "ok",
+      "report_json": "figures/qwen32b/transfer_sweep/transfer_2wiki_musique--hotpot/fused_transfer_report.json"
+    },
+    {
+      "index": 3,
+      "label": "2wiki + hotpot -> musique",
+      "train_outputs": [
+        "outputs/qwen32b/run_2wiki",
+        "outputs/qwen32b/run_hotpot"
+      ],
+      "test_output": "outputs/qwen32b/run_musique",
+      "plots_dir": "figures/qwen32b/transfer_sweep/transfer_2wiki_hotpot--musique",
+      "status": "ok",
+      "report_json": "figures/qwen32b/transfer_sweep/transfer_2wiki_hotpot--musique/fused_transfer_report.json"
+    }
+  ]
+}
