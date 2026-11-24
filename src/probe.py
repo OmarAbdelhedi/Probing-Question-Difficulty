@@ -1,45 +1,18 @@
-"""Tier-2 activation probes for FATHOM — does the network ENCODE hardness?
+"""Tier 2: is difficulty linearly decodable from the question, and at which layer?
 
-Tier 1 (``src/analyze.py``) checks that the model's *decomposition behavior*
-tracks the hardness label. Tier 2 asks the next question: is the hardness label
-**linearly decodable from the hidden state**, and WHERE in the network?
+Paper Sec. III-C / IV-B (Fig. 1, Table I "Layer" and "Probe AUC") and Fig. 5.
+Writes to the figures directory:
 
-It reads each question's ROOT-node activation (``activations/<id>.npz``, key
-``"root"``, shape ``[n_layers, hidden_dim]``) plus the ``metadata.jsonl`` labels,
-and produces five figures (+ a ``tier2_summary.json``):
+  tier2_probe_auc_by_layer.png        cross-validated probe AUC and balanced
+                                      accuracy per layer (Fig. 1)
+  tier2_diff_projection_by_layer.png  questions projected on the held-out
+                                      low -> high axis at six layers (Fig. 5)
+  tier2_centroid_separation_by_layer.png, tier2_pca_scatter_by_layer.png,
+  tier2_activation_norm_by_layer.png  supplementary diagnostics (not in the paper)
+  tier2_summary.json                  every per-layer number behind the plots
 
-  1. ``tier2_probe_auc_by_layer.png``           -- THE headline: cross-validated
-     linear-probe AUC (and balanced accuracy) vs layer -- where hardness becomes
-     linearly decodable.
-  2. ``tier2_centroid_separation_by_layer.png`` -- standardized class-centroid
-     distance per layer; a cheap, CV-free companion curve to the probe.
-  3. ``tier2_pca_scatter_by_layer.png``         -- 2D *unsupervised* PCA of the
-     LAYER-TO-LAYER activation diff (the residual-stream update ``act[L]-act[L-1]``
-     each layer applies) at a few layers, colored by label (do the classes separate
-     on their own once the large component carried unchanged across layers is removed?).
-  4. ``tier2_diff_projection_by_layer.png``     -- the SUPERVISED companion to (3):
-     the same layers viewed along the HELD-OUT class-difference axis (x) vs a residual
-     PC (y), so separation shows up where the probe says it should -- and, for an
-     ordinal scheme, the held-out middle class lands between the extremes (Tier 2g,
-     drawn). x is out-of-fold, so it cannot double-dip at p >> n.
-  5. ``tier2_activation_norm_by_layer.png``     -- mean L2 norm of the root vector
-     per layer split by label (is hardness merely confounded with raw scale?).
-
-THE PROBE. A diagonal-LDA linear probe: standardize each feature on the TRAIN
-fold, then project onto the difference of class means. It is regularization-free
-and numerically bulletproof in the p >> n regime here (``hidden_dim`` ~5120, tens
-to hundreds of questions), unlike unregularized logistic regression which
-diverges under separable data. AUC is computed over OUT-OF-FOLD scores pooled
-across all folds, so it is well-defined even when individual folds are tiny.
-The fit itself lives in ONE place -- ``fit_diag_lda`` / ``project_diag_lda``
-in ``src/probe_core.py`` -- shared by Tier 2 (here), Tier 2g and Tier 2t, so
-the axis definition cannot drift between tiers. (To use e.g. sklearn
-``LogisticRegression`` instead, swap that pair -- the rest of the pipeline is
-unchanged.)
-
-Dependencies: numpy + matplotlib + stdlib ONLY -- NO torch / transformers /
-sklearn -- so, like Tier 1, this runs on a laptop straight from the ``.npz``
-files (root-only load keeps memory at n x n_layers x hidden_dim float32).
+The probe is the diagonal-LDA probe of ``src/probe_core.py``; AUC is computed
+on out-of-fold scores pooled across the folds. numpy + matplotlib only.
 """
 
 import json
@@ -56,15 +29,13 @@ from matplotlib.lines import Line2D  # noqa: E402
 from src.probe_core import (  # noqa: E402
     EPS,
     argmax_finite,
-    balanced_acc,
     extreme_axis_scores,
     extreme_pool_folds,
     oof_diag_lda,
-    probe_auc_by_layer,  # Tier 2's headline CV probe (defined in probe_core); run() plots it below
-    roc_auc,
+    probe_auc_by_layer,
     stratified_test_folds,
 )
-from src.probe_io import load_run, resolve_plots_dir  # noqa: E402
+from src.run_data import load_run, resolve_plots_dir  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +166,7 @@ def _panel_layers(n_layers: int, n_panels: int = 6) -> list:
 
 
 def plot_probe_auc(layer_indices, result: dict, n: int, out_path: str) -> None:
-    """THE headline: probe AUC (+ balanced accuracy) vs layer."""
+    """Probe AUC (+ balanced accuracy) vs layer (paper Fig. 1)."""
     x = np.asarray(layer_indices)
     auc = np.asarray(result["auc"], dtype=float)
     bacc = np.asarray(result["balanced_acc"], dtype=float)
@@ -390,26 +361,22 @@ def plot_activation_norm(X, y, labels_ordered, label_colors, layer_indices, out_
 # --------------------------------------------------------------------------- #
 # Orchestration                                                               #
 # --------------------------------------------------------------------------- #
-def run(output_dir: str, metadata_path: str | None = None, activations_dir: str | None = None,
-        plots_dir: str | None = None, folds: int = 5, seed: int = 0) -> None:
-    """Build the Tier-2 probe artifacts for a finished run.
+def run(output_dir: str, plots_dir: str | None = None, folds: int = 5, seed: int = 0) -> None:
+    """Build the Tier-2 artifacts for a finished run.
 
     Args:
-        output_dir: run directory passed to ``main.py --output``.
-        metadata_path: ``metadata.jsonl`` path (default ``<output>/metadata.jsonl``).
-        activations_dir: ``<id>.npz`` dir (default ``<output>/activations``). If it
-            is absent (or yields no usable activation), Tier 2 is skipped (with a
-            message) rather than failing.
-        plots_dir: output dir (default ``<repo_root>/figures``, created if missing).
+        output_dir: run directory passed to ``main.py --output``. If it has no
+            usable activations, Tier 2 is skipped with a message.
+        plots_dir: output dir (default ``<output_dir>/figures``, created if missing).
         folds: requested CV folds (clamped to the smallest class count).
-        seed: RNG seed for fold shuffling + PCA subsampling (reproducible).
+        seed: RNG seed for fold shuffling and PCA subsampling.
     """
-    plots_dir = resolve_plots_dir(plots_dir)
     try:
-        data = load_run(output_dir, metadata_path, activations_dir, log_tag="probe")
+        data = load_run(output_dir, log_tag="probe")
     except FileNotFoundError as exc:
         print(f"[probe] SKIP Tier 2: {exc}")
         return
+    plots_dir = resolve_plots_dir(plots_dir, output_dir)
 
     X, y, labels_ordered, layer_indices = data.X, data.y, data.labels, data.layer_indices
     n, n_layers, hidden = X.shape
@@ -419,14 +386,14 @@ def run(output_dir: str, metadata_path: str | None = None, activations_dir: str 
     rng = np.random.default_rng(seed)
     summary = {
         "metadata_path": data.metadata_path,
-        "activations_dir": os.path.abspath(data.activations_dir),
+        "activations_dir": data.activations_dir,
         "n_questions": n,
         "n_layers": n_layers,
         "hidden_dim": hidden,
         "layer_indices": layer_indices,
         "labels": labels_ordered,
         "n_skipped_missing": len(data.missing),
-        "plots_dir": os.path.abspath(plots_dir),
+        "plots_dir": plots_dir,
         "plots": [],
     }
 
@@ -440,7 +407,7 @@ def run(output_dir: str, metadata_path: str | None = None, activations_dir: str 
         except Exception as exc:  # one bad plot must not lose the others / the json
             print(f"[probe]   WARNING: skipped {name}: {type(exc).__name__}: {exc}")
 
-    # 1) Probe AUC by layer (the headline).
+    # 1) Probe AUC by layer (Fig. 1).
     probe = probe_auc_by_layer(X, y, labels_ordered, folds, rng)
     if probe is None:
         print("[probe]   SKIP probe AUC: need >=2 labels.")
@@ -505,6 +472,6 @@ def run(output_dir: str, metadata_path: str | None = None, activations_dir: str 
     print(f"[probe]   wrote {summary_path}")
 
     if "probe" in summary:
-        print(f"[probe] best layer for hardness decodability: layer "
+        print(f"[probe] best layer for difficulty decodability: layer "
               f"{summary['probe']['best_layer_index']} (AUC={summary['probe']['best_auc']:.3f})")
     print("[probe] DONE.")

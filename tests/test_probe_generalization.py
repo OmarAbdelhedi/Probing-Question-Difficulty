@@ -4,7 +4,6 @@ classes, check that held-out middles interpolate on planted ordinal data."""
 import json
 
 import numpy as np
-import pytest
 
 from src.probe_generalization import interpolation_by_layer, run as tier2g_run
 

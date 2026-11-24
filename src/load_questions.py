@@ -1,32 +1,16 @@
-"""Load labeled QA questions for the FATHOM pipeline.
+"""Load the labeled questions that ``main.py`` extracts activations for.
 
-INPUT SCHEMA
-------------
-The input is a directory containing one or more ``*.jsonl`` files. Each file has
-ONE JSON object per line, with EXACTLY these three string keys::
+The input is a directory of ``*.jsonl`` files (as written by
+``src/datasets/build_*.py``), one JSON object per line::
 
     {"id": "q001", "question": "What is the capital of France?", "label": "easy"}
 
-Field meaning:
-  - ``id``       : unique question identifier (used to key output artifacts,
-                   e.g. ``activations/<id>.npz``). Must be non-empty and UNIQUE
-                   across ALL ``*.jsonl`` files in the directory.
-  - ``question`` : the natural-language question text (the ROOT of the
-                   decomposition tree built later in the pipeline).
-  - ``label``    : the supervision label for the question (free-form string;
-                   this module does not constrain its values).
+  - ``id``       : non-empty, unique across all files; names ``activations/<id>.npz``.
+  - ``question`` : the question text fed to the model.
+  - ``label``    : the difficulty label (free-form string).
 
-Questions are returned in deterministic (file, line) order: files are visited
-in sorted filename order, and lines within a file in their natural order.
-
-SWITCHING INPUT FORMAT
-----------------------
-To switch the input format (e.g. to CSV, a single JSON file, or a
-directory-of-files where each question is its own file), change ONLY this
-module. Keep the public contract identical: ``load_questions(input_dir)`` must
-still return a ``list[dict]`` where every dict has the keys ``id``,
-``question``, and ``label``. The rest of the pipeline depends on nothing else
-here.
+Questions are returned in deterministic order: files sorted by name, lines in
+file order.
 """
 
 import glob

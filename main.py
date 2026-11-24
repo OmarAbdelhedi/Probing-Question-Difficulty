@@ -1,13 +1,11 @@
-"""FATHOM entry point — THIN launcher.
+"""Extract per-layer hidden states for a directory of labeled questions.
 
-This module contains NO business logic. It only:
-  1. parses CLI arguments,
-  2. loads the YAML config,
-  3. delegates to ``src.pipeline.run``.
+    python main.py --input data/questions_musique \\
+        --output outputs/qwen32b/run_musique --model Qwen/Qwen2.5-32B-Instruct
 
-All real source lives in the ``src/`` package and is imported with
-absolute imports rooted at ``src`` (e.g. ``from src.pipeline import run``),
-so that ``python main.py ...`` works directly without ``python -m``.
+One forward pass per question, no generation. Re-running with the same
+``--output`` resumes: questions whose ``activations/<id>.npz`` already exists
+are skipped. See ``src/pipeline.py`` for the output format.
 """
 
 import argparse
@@ -17,68 +15,33 @@ import yaml
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "FATHOM: build recursive decomposition trees for labeled QA "
-            "questions and extract per-layer LLM hidden-state activations."
-        )
+        description="Extract per-layer hidden states of labeled questions from a causal LM."
     )
-    parser.add_argument(
-        "--input",
-        required=True,
-        help="REQUIRED. Directory of labeled questions (*.jsonl files).",
-    )
-    parser.add_argument(
-        "--output",
-        required=True,
-        help="REQUIRED. Output directory (created, incl. an activations/ subdir).",
-    )
-    parser.add_argument(
-        "--config",
-        default="./config.yaml",
-        help="Path to the YAML experiment config (default: ./config.yaml).",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Process only the first N questions (default: all).",
-    )
-    parser.add_argument(
-        "--max-depth",
-        dest="max_depth",
-        type=int,
-        default=None,
-        help="Override config max_depth (recursion hard cap).",
-    )
-    parser.add_argument(
-        "--device",
-        choices=["cpu", "cuda"],
-        default=None,
-        help="Override config device.",
-    )
-    parser.add_argument(
-        "--model",
-        dest="model_name",
-        default=None,
-        help="Override config model_name (HF causal LM id used for BOTH "
-             "decomposition and activation extraction).",
-    )
+    parser.add_argument("--input", required=True,
+                        help="Directory of labeled questions (*.jsonl with id/question/label).")
+    parser.add_argument("--output", required=True,
+                        help="Run directory to write activations/, metadata.jsonl and run_config.json to.")
+    parser.add_argument("--config", default="config.yaml",
+                        help="YAML extraction settings (default: config.yaml).")
+    parser.add_argument("--model", dest="model_name", default=None,
+                        help="HuggingFace model id; overrides model_name in the config.")
+    parser.add_argument("--device", choices=["cpu", "cuda"], default=None,
+                        help="Overrides device in the config.")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Process only the first N questions.")
     args = parser.parse_args()
 
-    # Load experiment params (NO paths live in the config; paths come from CLI).
     with open(args.config, "r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh)
+        config = yaml.safe_load(fh)
 
-    # Import here so argument parsing / config errors surface before the heavy
-    # torch/transformers import chain. Absolute import rooted at src.
+    # Imported here so argument errors surface before the torch import.
     from src.pipeline import run
 
     run(
         input_dir=args.input,
         output_dir=args.output,
-        config=cfg,
+        config=config,
         limit=args.limit,
-        max_depth=args.max_depth,
         device=args.device,
         model_name=args.model_name,
     )

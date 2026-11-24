@@ -1,7 +1,7 @@
-"""Tests for src/run_data.py -- the shared data layer every tier loads through:
-metadata records, label ordering, root-activation loading, RunData, and the
-plots-dir default. Also enforces the layering guarantee: this layer (and the
-math core) must import without matplotlib."""
+"""Tests for src/run_data.py, the data layer every analysis loads through:
+metadata records, label ordering, activation loading, RunData, and the
+plots-dir default. Also checks that this layer (and the math core) imports
+without matplotlib."""
 
 import json
 import os
@@ -27,7 +27,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # --------------------------------------------------------------------------- #
 def test_data_and_math_layers_import_without_matplotlib():
     """The whole point of the split: tiers' IO must not drag in plotting."""
-    code = ("import sys; import src.run_data, src.probe_core; "
+    code = ("import sys; import src.run_data, src.probe_core, src.surface; "
             "assert 'matplotlib' not in sys.modules, "
             "'the data/math layer pulled in matplotlib'")
     subprocess.run([sys.executable, "-c", code], check=True, cwd=REPO_ROOT)
@@ -60,8 +60,8 @@ def write_metadata(path, lines):
 
 def test_load_metadata_happy_path_tolerates_blank_lines(tmp_path):
     path = tmp_path / "metadata.jsonl"
-    write_metadata(path, [{"id": "q1", "label": "easy", "nodes": []}, "",
-                          {"id": "q2", "label": "hard", "nodes": []}])
+    write_metadata(path, [{"id": "q1", "label": "easy"}, "",
+                          {"id": "q2", "label": "hard"}])
     records = load_metadata(str(path))
     assert [r["id"] for r in records] == ["q1", "q2"]
 
@@ -76,8 +76,8 @@ def test_load_metadata_missing_file_raises(tmp_path):
     [
         (["{bad"], "Invalid JSON"),
         (["[1]"], "not a JSON object"),
-        ([{"id": "q1", "label": "easy"}], "Missing key 'nodes'"),
-        ([{"id": "q1", "label": "easy", "nodes": "oops"}], "'nodes' must be a list"),
+        ([{"id": "q1"}], "Missing key 'label'"),
+        ([{"label": "easy"}], "Missing key 'id'"),
     ],
 )
 def test_load_metadata_malformed_lines(tmp_path, lines, match):
@@ -94,6 +94,19 @@ def test_load_metadata_empty_file_raises(tmp_path):
         load_metadata(str(path))
 
 
+def test_legacy_metadata_with_tree_fields_still_loads(planted_xy, make_run):
+    """Runs extracted for the paper also carry nodes / max_depth / ... keys."""
+    X, y = planted_xy([("easy", 0.0), ("hard", 2.0)], per_class=2)
+    run_dir = make_run("legacy", X, y, questions=["a?", "b?", "c?", "d?"])
+    path = os.path.join(run_dir, "metadata.jsonl")
+    records = [json.loads(line) for line in open(path, encoding="utf-8")]
+    write_metadata(path, [{**r, "max_depth": 0, "decompose_context": "isolated",
+                           "nodes": [{"id": "root", "parent_id": None}]} for r in records])
+    data = load_run(run_dir)
+    assert data.X.shape == X.shape
+    assert data.questions == ["a?", "b?", "c?", "d?"]
+
+
 # --------------------------------------------------------------------------- #
 # load_root_activations                                                       #
 # --------------------------------------------------------------------------- #
@@ -105,6 +118,7 @@ def test_load_root_activations_round_trip(planted_xy, make_run):
     assert loaded.X.dtype == np.float32 and loaded.X.shape == X.shape
     np.testing.assert_array_equal(loaded.X, X)  # metadata order preserved
     assert loaded.y == [str(lab) for lab in y]
+    assert loaded.questions == [f"synthetic question number {i}?" for i in range(len(y))]
     assert loaded.layer_indices == [0, 1, 2]  # "all" -> positional
     assert loaded.missing == []
 
@@ -144,7 +158,7 @@ def test_load_root_activations_inconsistent_shapes_raise(planted_xy, make_run):
 def test_load_root_activations_nothing_loadable_raises(planted_xy, make_run):
     X, y = planted_xy([("easy", 0.0)], per_class=2)
     run_dir = make_run("r", X, y, skip_npz={"r_q0", "r_q1"})
-    with pytest.raises(FileNotFoundError, match="No root activations"):
+    with pytest.raises(FileNotFoundError, match="No activations loaded"):
         load_root_activations(os.path.join(run_dir, "metadata.jsonl"),
                               os.path.join(run_dir, "activations"))
 
@@ -177,5 +191,10 @@ def test_load_run_unreadable_run_config_degrades_to_empty(planted_xy, make_run):
 
 def test_resolve_plots_dir_creates_requested_dir(tmp_path):
     target = tmp_path / "figs" / "nested"
-    assert resolve_plots_dir(str(target)) == str(target)
+    assert resolve_plots_dir(str(target), str(tmp_path)) == str(target)
     assert target.is_dir()
+
+
+def test_resolve_plots_dir_defaults_inside_the_run(tmp_path):
+    assert resolve_plots_dir(None, str(tmp_path)) == str(tmp_path / "figures")
+    assert (tmp_path / "figures").is_dir()

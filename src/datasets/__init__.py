@@ -1,8 +1,5 @@
-"""Dataset builders: convert raw QA distributions into FATHOM's labeled jsonl.
+"""Builders that turn each raw benchmark into a balanced, labeled question set.
 
-One ``build_<dataset>.py`` module per source dataset (each runnable as
-``python -m src.datasets.build_<dataset>``), sharing the bucket -> balance ->
-sample -> write core in ``common``.
+One ``build_<dataset>.py`` per benchmark, each runnable as
+``python -m src.datasets.build_<dataset>``; the shared logic is in ``common``.
 """
-
-__all__: list = []

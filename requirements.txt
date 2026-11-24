@@ -1,7 +1,12 @@
+# Activation extraction (main.py)
 torch
-transformers
+transformers>=5.0
 accelerate
-numpy
 pyyaml
+
+# Analysis (analyze.py, transfer.py): CPU only
+numpy
 matplotlib
-pytest  # tests/ only; the pipeline and analysis never import it
+
+# Tests
+pytest

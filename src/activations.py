@@ -1,14 +1,9 @@
-"""Activation extraction for FATHOM.
+"""Forward-pass helpers: question texts -> per-layer pooled hidden states.
 
-Forward-pass-only helpers that turn node question texts into per-layer pooled
-hidden-state vectors using a single HuggingFace causal LM. NO generation here —
-decomposition (the only generation step) lives in ``src/decompose.py``.
-
-Design rules (validity-critical):
-  * Same model / layers / pooling used everywhere (set by the caller).
-  * Pooling NEVER touches padding — every sequence is pooled by its OWN
-    attention mask, so right- or left-padding both work.
-  * eval() + torch.no_grad(), float32 math and storage, deterministic output.
+  * Questions are tokenised as raw text, without a chat template.
+  * Pooling never touches padding: every sequence is pooled with its own
+    attention mask, so right- and left-padding give the same vectors.
+  * ``eval()`` + ``torch.no_grad()``; pooling math and storage in float32.
 """
 
 import numpy as np
@@ -118,7 +113,7 @@ def extract_activations(
     ``tokenizer.pad_token`` and fixed all seeds for determinism.
 
     Args:
-        texts: node question strings to embed.
+        texts: question strings.
         model: a loaded HF causal LM (already on ``device``).
         tokenizer: the matching tokenizer (pad_token set).
         pooling: "last_token" or "mean" (see ``pool_hidden_states``).
@@ -152,10 +147,10 @@ def extract_activations(
             # CPU/float32 BEFORE stacking: under device_map="auto" different layers
             # can live on different GPUs, so they cannot be stacked in place.
             pooled = [
-                pool_hidden_states(hs[l], enc["attention_mask"], pooling).to(
+                pool_hidden_states(hs[layer], enc["attention_mask"], pooling).to(
                     "cpu", dtype=torch.float32
                 )
-                for l in sel
+                for layer in sel
             ]
             stacked = torch.stack(pooled, dim=1)  # [batch, n_sel, hidden_dim] on CPU
 

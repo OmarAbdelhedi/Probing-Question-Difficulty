@@ -1,41 +1,26 @@
-"""Pure-numpy probe-math core shared by every FATHOM activation-probe tier.
+"""The probe math shared by every analysis (numpy only).
 
-Tier 2 (``src/probe.py``), Tier 2b (``src/probe_controls.py``), Tier 2g
-(``src/probe_generalization.py``) and Tier 2t (``src/probe_transfer.py``) all
-measure the SAME thing -- a diagonal-LDA axis over root activations -- so the
-math lives HERE, once, under public names: the axis fit / projection
-(``fit_diag_lda`` / ``project_diag_lda`` / ``oof_diag_lda``), its scoring
-metrics (``roc_auc``, ``balanced_acc``) and the per-layer cross-validated probe
-driver that combines them (``probe_auc_by_layer``, Tier 2's headline + the
-covariate control), the middle-class interpolation
-fraction (``middle_positions``, Tier 2g/2t's ordinality metric) and the
-informative-band mean that summarizes it (``mean_over_informative``),
-stratified CV fold construction (``stratified_test_folds`` plus the extreme-pool
-``extreme_pool_folds`` shared by Tier 2g and Tier 2's held-out axis), covariate
-residualization (Tier 2b's controls), and the shared constants (``EPS``
-variance floor, ``INFORMATIVE_AUC`` band threshold, ``REPO_ROOT``).
-
-numpy + stdlib ONLY -- no matplotlib / torch / sklearn -- so the math layer
-imports (and unit-tests) without a plotting stack. Tier modules import these
-by public name; no module reaches into another module's underscore-privates.
+  * The diagonal-LDA probe (paper Sec. III-C): standardise each feature on the
+    training split, take the difference of class means as the direction, score
+    by projection -- ``fit_diag_lda`` / ``project_diag_lda`` / ``oof_diag_lda``.
+  * Metrics: rank-based ``roc_auc``, ``balanced_acc``, and the bootstrap CI
+    over questions of the peak-layer AUC (``bootstrap_peak_ci``, Table I).
+  * The per-layer cross-validated driver ``probe_auc_by_layer`` (pooled
+    out-of-fold AUC; macro one-vs-rest for more than two classes).
+  * Covariate residualisation fit on the training split only (Sec. III-D).
+  * The ordinality protocol (Sec. III-E): ``extreme_pool_folds``,
+    ``extreme_axis_scores`` and the interpolation fraction ``middle_positions``.
+  * ``mean_over_informative``: average over layers where the axis separates.
 """
 
-import os
-
 import numpy as np
-
-# This file is <repo_root>/src/probe_core.py, so the repo root is two levels
-# up. Every analysis tier defaults its figures dir to <repo_root>/figures,
-# regardless of the cwd.
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Variance floor: features whose train-fold std is below this are treated as
 # constant (std set to 1) so they contribute ~nothing instead of blowing up.
 EPS = 1e-6
 
-# A per-layer AUC "counts" toward a fold-averaged summary only where it clears
-# this -- the informative band Tier 2g (middle position) and Tier 2t (retention
-# / position) average over. One definition so the band cannot drift.
+# "Informative layers": a per-layer AUC counts toward a band average only where
+# it is strictly above this (Tier 2g positions; transfer retention/positions).
 INFORMATIVE_AUC = 0.70
 
 
@@ -97,11 +82,10 @@ def middle_positions(scores: np.ndarray, low_idx, high_idx, mid_idx: dict) -> di
               / (mean(scores[high]) - mean(scores[low]))
 
     0 -> sits on the low class, 1 -> on the high class, strictly in between ->
-    interpolates (the ordinal-depth signal). THE single definition of the
-    Tier 2g / Tier 2t headline ordinality metric: 2g feeds out-of-fold
-    projections, 2t foreign-axis projections, and the position math is this,
-    once. NaN scores are ignored (``nanmean``); if the extremes fail to
-    separate (|denominator| <= ``EPS``) every position is NaN.
+    interpolates (paper Eq. 4). Tier 2g feeds out-of-fold projections, the
+    transfer feeds projections on another dataset's axis. NaN scores are
+    ignored (``nanmean``); if the extremes fail to separate
+    (|denominator| <= ``EPS``) every position is NaN.
 
     Args:
         scores: scalar score per row ``[n]``.
@@ -131,12 +115,8 @@ def mean_over_informative(values, informative_mask, fallback_mask=None) -> float
     """``nanmean`` of ``values`` over the informative layers, with a fallback.
 
     ``informative_mask`` selects the layers that count (typically where the
-    relevant AUC clears :data:`INFORMATIVE_AUC`). When NO layer qualifies, fall
-    back to ``fallback_mask`` if given, else to EVERY layer. THE single
-    definition of "average the metric only where the axis actually separates",
-    shared by Tier 2g (each middle's interpolation position) and Tier 2t
-    (retention and foreign-axis positions), so the band reduction -- and its
-    empty-band fallback -- cannot drift between them.
+    relevant AUC clears :data:`INFORMATIVE_AUC`). When no layer qualifies, fall
+    back to ``fallback_mask`` if given, else to every layer.
     """
     values = np.asarray(values, dtype=float)
     mask = np.asarray(informative_mask, dtype=bool)
@@ -175,11 +155,9 @@ def extreme_pool_folds(y, low, high, middles, k: int, rng):
     NEVER placed in a fold -- they are projected as always-out-of-sample
     downstream.
 
-    Shared by Tier 2g (``interpolation_by_layer``) and Tier 2's diff-projection
-    scatter (``diff_projection_by_layer``) so the fold construction -- and the
-    RNG it consumes (``shuffle(low)`` then ``shuffle(high)``) -- cannot drift
-    between them. The caller computes ``k`` and guards the <2-per-extreme case,
-    so each tier keeps its own skip message.
+    Shared by Tier 2g and Tier 2's diff-projection scatter (paper Figs. 4-5),
+    including the RNG it consumes (``shuffle(low)`` then ``shuffle(high)``).
+    The caller computes ``k`` and guards the <2-per-extreme case.
 
     Returns:
         ``(low_idx, high_idx, mid_idx, test_folds, extreme_all)``.
@@ -227,7 +205,7 @@ def residualize(Xtr, Ctr, Xte, Cte):
 # The diagonal-LDA axis                                                       #
 # --------------------------------------------------------------------------- #
 def fit_diag_lda(Xtr: np.ndarray, pos_mask: np.ndarray):
-    """Fit the diagonal-LDA axis on one train split. THE single source of truth.
+    """Fit the diagonal-LDA axis on one train split (paper Eqs. 2-3).
 
     Standardize each feature on the train split (stds below ``EPS`` are set to
     1 so ~constant features contribute ~nothing instead of blowing up), then
@@ -235,10 +213,8 @@ def fit_diag_lda(Xtr: np.ndarray, pos_mask: np.ndarray):
     negative -> positive class. The decision threshold ``thr`` is the midpoint
     of the two train-class mean projections.
 
-    Every axis in FATHOM is fit here -- the Tier-2 CV probe (via
-    ``oof_diag_lda``), Tier 2g's extremes-only axis and Tier 2t's
-    cross-dataset transfer axis -- so the probe definition cannot drift
-    between tiers.
+    Every axis in the analysis is fit here: the cross-validated probe, the
+    extremes-only ordinality axis and the cross-dataset transfer axis.
 
     Args:
         Xtr: train rows ``[n_train, n_features]``.
@@ -303,10 +279,9 @@ def extreme_axis_scores(Xl, y, high, mid_idx: dict, test_folds: list, extreme_al
 
     Returns a full-length ``scores`` vector ``[n]``: extreme rows carry their
     out-of-fold score, middle rows the fold-averaged projection, any row in
-    neither pool stays NaN. THE single definition of the extreme-trained axis,
-    shared by Tier 2g (its interpolation fraction reads the middle vs the
-    extremes) and Tier 2's diff-projection scatter (it plots this as the x-axis),
-    so the held-out axis cannot drift between them.
+    neither pool stays NaN. Shared by Tier 2g (its interpolation fraction reads
+    the middle vs the extremes) and Tier 2's diff-projection scatter (it plots
+    this as the x-axis).
 
     Args:
         Xl: rows at one layer ``[n, n_features]``.
@@ -333,7 +308,8 @@ def extreme_axis_scores(Xl, y, high, mid_idx: dict, test_folds: list, extreme_al
 # --------------------------------------------------------------------------- #
 # Per-layer cross-validated probe driver                                      #
 # --------------------------------------------------------------------------- #
-def probe_auc_by_layer(X: np.ndarray, y, labels_ordered, k_req: int, rng, covariate=None):
+def probe_auc_by_layer(X: np.ndarray, y, labels_ordered, k_req: int, rng, covariate=None,
+                       return_scores: bool = False):
     """Cross-validated linear-probe AUC (+ balanced acc) for every layer.
 
     Binary -> one task (positive = the LAST / hardest ordered label). >2 labels
@@ -341,14 +317,16 @@ def probe_auc_by_layer(X: np.ndarray, y, labels_ordered, k_req: int, rng, covari
     ``{"skipped": True, "reason": ...}`` dict if a class has <2 samples (CV
     impossible); otherwise a dict with per-layer ``auc`` / ``balanced_acc`` lists.
 
-    ``covariate`` (optional, shape ``[n]``) is regressed out of every feature
-    within each train fold before probing — Tier 2b's length control. ``None``
-    (default) is the plain probe.
+    ``covariate`` (optional, ``[n]`` or ``[n, k]``) is regressed out of every
+    feature within each train fold before probing (Tier 2b's controls).
 
-    THE single per-layer probe driver: Tier 2 (``src/probe.py``) plots it, Tier 2b
-    (``src/probe_controls.py``) reuses it for the residualized controls, and the
-    transfer tiers restrict it to a class pair -- so the CV protocol cannot drift
-    between them.
+    ``return_scores=True`` also returns, per task, the out-of-fold scores
+    (``oof_scores``: list of ``[n_layers, n]``) and positive masks
+    (``pos_masks``) for :func:`bootstrap_peak_ci`. It does not change the RNG
+    consumption, so the AUC curve is identical either way.
+
+    Every per-layer AUC curve in the analysis comes from this driver, so the
+    CV protocol is the same everywhere.
     """
     n, n_layers, _ = X.shape
     y = np.asarray(y, dtype=object)
@@ -369,20 +347,23 @@ def probe_auc_by_layer(X: np.ndarray, y, labels_ordered, k_req: int, rng, covari
         tasks = [(c, y == c) for c in classes]
         mode = "ovr-macro"
 
-    per_task_auc, per_task_bacc = [], []
+    per_task_auc, per_task_bacc, per_task_scores = [], [], []
     for _label, pmask in tasks:
         folds = stratified_test_folds(pmask, k, rng)
         aucs, baccs = [], []
+        S = np.empty((n_layers, n), dtype=np.float64)
         for L in range(n_layers):
             scores, preds = oof_diag_lda(X[:, L, :], pmask, folds, covariate)
+            S[L] = scores
             aucs.append(roc_auc(scores, pmask))
             baccs.append(balanced_acc(pmask, preds))
         per_task_auc.append(aucs)
         per_task_bacc.append(baccs)
+        per_task_scores.append(S)
 
     auc = np.nanmean(np.asarray(per_task_auc), axis=0)
     bacc = np.nanmean(np.asarray(per_task_bacc), axis=0)
-    return {
+    result = {
         "skipped": False,
         "mode": mode,
         "k": k,
@@ -391,4 +372,50 @@ def probe_auc_by_layer(X: np.ndarray, y, labels_ordered, k_req: int, rng, covari
         "counts": counts,
         "auc": auc.tolist(),
         "balanced_acc": bacc.tolist(),
+    }
+    if return_scores:
+        result["oof_scores"] = per_task_scores
+        result["pos_masks"] = [pmask for _label, pmask in tasks]
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Bootstrap CI over questions (paper Table I, "±")                            #
+# --------------------------------------------------------------------------- #
+def macro_auc(oof_scores, pos_masks, layer: int, rows=None) -> float:
+    """Mean over tasks of the AUC at one layer, optionally on resampled ``rows``.
+
+    A task whose resample lost one of its two classes is skipped.
+    """
+    vals = []
+    for S, pm in zip(oof_scores, pos_masks):
+        s, p = (S[layer], pm) if rows is None else (S[layer][rows], pm[rows])
+        if p.all() or not p.any():
+            continue
+        vals.append(roc_auc(s, p))
+    return float(np.nanmean(vals)) if vals else float("nan")
+
+
+def bootstrap_peak_ci(oof_scores, pos_masks, n_boot: int, rng) -> dict:
+    """Peak layer, its AUC, and a 95% percentile bootstrap CI over questions.
+
+    The out-of-fold scores are kept fixed and the questions are resampled with
+    replacement ``n_boot`` times, recomputing the (macro) AUC at the peak
+    layer each time. Nothing is refit, so this is cheap. This is the procedure
+    behind the ± half-widths in the paper's Table I (2000 resamples).
+    """
+    n_layers, n = oof_scores[0].shape
+    curve = np.array([macro_auc(oof_scores, pos_masks, L) for L in range(n_layers)])
+    peak = argmax_finite(curve)
+    boot = np.array([
+        macro_auc(oof_scores, pos_masks, peak, rng.integers(0, n, n))
+        for _ in range(n_boot)
+    ])
+    lo, hi = np.nanpercentile(boot, [2.5, 97.5])
+    return {
+        "layer": int(peak),
+        "auc": float(curve[peak]),
+        "ci95": [float(lo), float(hi)],
+        "half_width": float((hi - lo) / 2),
+        "se": float(np.nanstd(boot)),
     }

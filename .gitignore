@@ -1,4 +1,26 @@
-
 # Editor
 .idea/
 .vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+env/
+venv/
+.venv/
+
+# Secrets
+.env
+
+# Extracted activations (main.py)
+outputs/
+
+# Third-party benchmark data — downloaded, never redistributed (see README)
+data/
+
+# Local copy of the paper (not redistributed)
+*.pdf
+
+# Results and figures (produced by analyze.py / transfer.py; not published here)
+figures/

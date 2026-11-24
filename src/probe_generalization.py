@@ -1,28 +1,19 @@
-"""Tier-2g GENERALIZATION-ACROSS-DEPTH test for FATHOM.
+"""Tier 2g: is the decoded direction an ordinal axis?
 
-Tier 2b showed the hop-count signal survives surface controls. The remaining
-worry: the probe might be memorizing class-specific templates/topics rather than
-a genuine *ordinal depth* axis. This test settles it.
-
-Train the diagonal-LDA probe on ONLY the EXTREME classes (lowest vs highest hop
-count, e.g. 2hop vs 4hop), then project the HELD-OUT middle class(es) (3hop --
-never seen in training) onto that learned axis. If the middle lands *between* the
-extremes, the model places "3 hops" between "2" and "4" without being told 3hop
-exists -- evidence of a real ordinal depth representation, not class memorization.
-
-Per layer, k-fold over the extreme pool: train the oriented (high - low) direction
-on the extreme-train split, project the extreme-test split (-> honest held-out
-low-vs-high AUC) and ALL middle rows. The headline metric is the INTERPOLATION
-FRACTION of each middle class:
+Paper Sec. III-E / IV-D (Fig. 4). Train the probe on the two extreme classes
+only (e.g. 2hop vs 4hop) and project the held-out middle class (3hop), never
+seen in training, onto that axis. Per layer, k-fold over the extreme pool: fit
+on the extreme-train split, score the extreme-test split (held-out low-vs-high
+AUC) and every middle row. The metric is the interpolation fraction (Eq. 4):
 
     pos = (mean_proj[middle] - mean_proj[low]) / (mean_proj[high] - mean_proj[low])
 
-  pos = 0 -> looks like the low class; pos = 1 -> looks like the high class;
-  0 < pos < 1 -> interpolates (ordinal); pos ~ 0.5 -> right in the middle.
+0 = looks like the low class, 1 = like the high class, in between = ordinal.
+``mean_position_informative`` averages it over layers whose held-out extreme
+AUC exceeds ``INFORMATIVE_AUC``.
 
-numpy + matplotlib only; reuses the shared probe core (``src.probe_core``).
-Requires >=3 ordered classes (a graded label scheme, e.g. MuSiQue hops_multiclass);
-skips gracefully otherwise.
+Needs at least three ordered classes (HotpotQA, MuSiQue); skips otherwise.
+Writes ``tier2g_generalization_by_layer.png`` and ``tier2g_summary.json``.
 """
 
 import json
@@ -69,7 +60,7 @@ def interpolation_by_layer(X, y, labels_ordered, k_req, rng):
 
     # Stratified k-fold over the EXTREME pool only (low + high); the middle
     # rows are held out of every fold (shared with Tier 2's diff-projection
-    # scatter so the fold construction cannot drift).
+    # scatter).
     low_idx, high_idx, mid_idx, test_folds, extreme_all = extreme_pool_folds(
         y, low, high, middles, k, rng)
 
@@ -133,17 +124,10 @@ def plot_generalization(layer_indices, result, out_path) -> None:
     plt.close(fig)
 
 
-def run(output_dir: str, metadata_path: str | None = None, activations_dir: str | None = None,
-        plots_dir: str | None = None, folds: int = 5, seed: int = 0) -> None:
-    """Build the Tier-2g generalization-across-depth artifact.
-
-    Args mirror :func:`src.probe.run`. Writes ``tier2g_generalization_by_layer.png``
-    and ``tier2g_summary.json`` to ``plots_dir`` (default ``<repo_root>/figures``).
-    Needs >=3 ordered classes (a graded label scheme); skips gracefully otherwise.
-    """
-    plots_dir = resolve_plots_dir(plots_dir)
+def run(output_dir: str, plots_dir: str | None = None, folds: int = 5, seed: int = 0) -> None:
+    """Build the Tier-2g artifacts for a finished run (args mirror :func:`src.probe.run`)."""
     try:
-        data = load_run(output_dir, metadata_path, activations_dir, log_tag="probe2g")
+        data = load_run(output_dir, log_tag="probe2g")
     except FileNotFoundError as exc:
         print(f"[probe2g] SKIP Tier 2g: {exc}")
         return
@@ -151,8 +135,9 @@ def run(output_dir: str, metadata_path: str | None = None, activations_dir: str 
     X, y, labels_ordered, layer_indices = data.X, data.y, data.labels, data.layer_indices
     if len(labels_ordered) < 3:
         print(f"[probe2g] SKIP: need >=3 ordered classes for a held-out middle "
-              f"(have {labels_ordered}); use a graded label scheme (e.g. hops_multiclass).")
+              f"(have {labels_ordered}).")
         return
+    plots_dir = resolve_plots_dir(plots_dir, output_dir)
 
     rng = np.random.default_rng(seed)
     result = interpolation_by_layer(X, y, labels_ordered, folds, rng)
@@ -185,7 +170,7 @@ def run(output_dir: str, metadata_path: str | None = None, activations_dir: str 
         "best_layer_index": layer_indices[best],
         "best_auc_2v4": float(auc[best]),
         "mean_position_informative": positions,
-        "plots_dir": os.path.abspath(plots_dir),
+        "plots_dir": plots_dir,
         "plots": [os.path.basename(path)],
     }
     summary_path = os.path.join(plots_dir, "tier2g_summary.json")
@@ -201,9 +186,7 @@ def run(output_dir: str, metadata_path: str | None = None, activations_dir: str 
         print(f"[probe2g]   {m}: mean position on {result['low']}->{result['high']} axis "
               f"= {pos:.2f}  (0={result['low']}, 1={result['high']}; over informative layers)")
         if 0.0 < pos < 1.0:
-            print(f"[probe2g]   => {m} INTERPOLATES between the extremes: genuine ORDINAL depth "
-                  "representation (not class-specific memorization).")
+            print(f"[probe2g]   => {m} lies between the extremes (ordinal axis).")
         else:
-            print(f"[probe2g]   => {m} does NOT interpolate (pos {pos:.2f}): the probe likely keys "
-                  "on class-specific features, not a clean depth axis.")
+            print(f"[probe2g]   => {m} does NOT lie between the extremes (pos {pos:.2f}).")
     print("[probe2g] DONE.")

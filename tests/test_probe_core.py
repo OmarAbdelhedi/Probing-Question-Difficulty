@@ -10,10 +10,11 @@ import pytest
 
 from src.probe_core import (
     EPS,
-    REPO_ROOT,
     argmax_finite,
     balanced_acc,
+    bootstrap_peak_ci,
     fit_diag_lda,
+    macro_auc,
     middle_positions,
     oof_diag_lda,
     probe_auc_by_layer,
@@ -100,12 +101,6 @@ def test_argmax_finite():
     assert argmax_finite([np.nan, 1.0, 3.0, np.nan, 2.0]) == 2
     assert argmax_finite([np.nan, np.nan]) == 0
     assert argmax_finite([]) == 0
-
-
-def test_repo_root_points_at_the_repo():
-    import os
-    assert os.path.isfile(os.path.join(REPO_ROOT, "config.yaml"))
-    assert os.path.isdir(os.path.join(REPO_ROOT, "src"))
 
 
 # --------------------------------------------------------------------------- #
@@ -341,3 +336,40 @@ def test_probe_auc_by_layer_covariate_control_collapses_confound():
                                covariate=c)
     assert raw["auc"][0] > 0.95
     assert 0.25 < resid["auc"][0] < 0.75
+
+
+# --------------------------------------------------------------------------- #
+# Out-of-fold scores and the bootstrap CI                                     #
+# --------------------------------------------------------------------------- #
+def test_return_scores_does_not_change_the_curve(planted_xy):
+    X, y = planted_xy([("2hop", 0.0), ("3hop", 1.0), ("4hop", 2.0)],
+                      per_class=10, n_layers=3)
+    labels = ["2hop", "3hop", "4hop"]
+    plain = probe_auc_by_layer(X, y, labels, 4, np.random.default_rng(0))
+    rich = probe_auc_by_layer(X, y, labels, 4, np.random.default_rng(0), return_scores=True)
+    assert plain["auc"] == rich["auc"]
+    assert len(rich["oof_scores"]) == 3            # one-vs-rest: one task per class
+    assert rich["oof_scores"][0].shape == (3, 30)  # [n_layers, n]
+    # The stored scores reproduce the curve exactly.
+    for L in range(3):
+        assert macro_auc(rich["oof_scores"], rich["pos_masks"], L) == pytest.approx(rich["auc"][L])
+
+
+def test_macro_auc_skips_tasks_whose_resample_lost_a_class():
+    scores = [np.array([[0.1, 0.2, 0.9, 0.8]])]
+    masks = [np.array([False, False, True, True])]
+    assert macro_auc(scores, masks, 0) == 1.0
+    assert np.isnan(macro_auc(scores, masks, 0, rows=np.array([0, 1, 1, 0])))
+
+
+def test_bootstrap_peak_ci_brackets_the_peak_and_is_seeded(planted_xy):
+    X, y = planted_xy([("easy", 0.0), ("hard", 2.0)], per_class=30,
+                      n_layers=3, signal_layers=[2])
+    res = probe_auc_by_layer(X, y, ["easy", "hard"], 5, np.random.default_rng(0),
+                             return_scores=True)
+    a = bootstrap_peak_ci(res["oof_scores"], res["pos_masks"], 200, np.random.default_rng(1))
+    b = bootstrap_peak_ci(res["oof_scores"], res["pos_masks"], 200, np.random.default_rng(1))
+    assert a == b
+    assert a["layer"] == 2 and a["auc"] == pytest.approx(max(res["auc"]))
+    assert a["ci95"][0] < a["auc"] < a["ci95"][1]
+    assert 0 < a["half_width"] < 0.2

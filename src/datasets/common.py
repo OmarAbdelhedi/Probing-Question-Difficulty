@@ -1,22 +1,16 @@
-"""Shared core for the dataset builders (build_musique / build_2wiki / build_hotpot).
+"""Shared core of the dataset builders: load -> label -> balance -> sample -> write.
 
-Each ``src/datasets/build_*.py`` differs only in how a raw example yields a
-label (hop count, native level, type, ...) and in its argparse surface. The
-tolerant JSON/JSONL loader and the whole bucket -> balance-to-smallest ->
-shuffle -> length-per-label report -> uniquify-ids -> write-jsonl pipeline are
-identical across the three and live here.
+Each ``build_<dataset>.py`` only defines how a raw example gets its label.
 
-REPRODUCIBILITY -- why ``order_labels`` exists: the per-label shuffles all
-consume ONE shared RNG, so the order the label buckets are visited in changes
-which questions get sampled (and the final cross-label shuffle). The three
-builders historically visit buckets in different orders, so each pins its own:
+Reproducibility: the per-label shuffles consume one shared RNG, so the order
+in which label buckets are visited decides which questions are sampled. Each
+builder pins the order used for the paper:
 
     musique: ``sorted``         (alphabetical labels)
-    2wiki:   ``list``           (insertion order = first occurrence in the raw file)
-    hotpot:  ``_display_order`` (easy < medium < hard, else alphabetical)
+    2wiki:   ``list``           (first occurrence in the raw file)
+    hotpot:  ``_display_order`` (easy < medium < hard)
 
-Changing a builder's ``order_labels`` silently resamples its question set --
-only do that if you intend to regenerate (and re-run) that dataset.
+Changing it resamples the question set.
 """
 
 import json
@@ -52,18 +46,16 @@ def build_and_write(
     seed: int,
     output: str,
     too_few_hint: str,
-    length_note: str,
 ) -> None:
     """Bucket -> balance -> sample -> length report -> uniquify -> write jsonl.
 
     tag          -- log prefix, e.g. 'musique' (lines print as '[musique] ...').
-    label_fn     -- ex -> label string, or None to DROP the example.
+    label_fn     -- ex -> label string, or None to drop the example.
     id_keys      -- raw-id key precedence, e.g. ('_id', 'id'); falsy values skip.
     order_labels -- labels-dict -> ordered label list; pinned per builder (see
                     module docstring: changing it resamples the question set).
     per_class    -- cap per class, 0 = no cap; classes balance to the smallest.
     too_few_hint -- appended to the error when <2 labels survive bucketing.
-    length_note  -- dataset-specific line closing the length-confound report.
     """
     # Bucket by derived label.
     buckets: dict[str, list] = {}
@@ -99,8 +91,9 @@ def build_and_write(
         print(f"[{tag}] label {lab!r}: {avail[lab]} available -> {take_n} kept")
     rng.shuffle(selected)
 
-    # Confound preview: average question length per label (chars + words).
-    print(f"[{tag}] --- length-per-label (confound preview) ---")
+    # Average question length per label: a preview of the surface confound
+    # that the Tier 2b controls address.
+    print(f"[{tag}] --- question length per label ---")
     by_lab: dict[str, list] = {}
     for r in selected:
         by_lab.setdefault(r["label"], []).append(r["question"])
@@ -110,7 +103,6 @@ def build_and_write(
         words = [len(q.split()) for q in qs]
         print(f"[{tag}]   {lab}: n={len(qs)} | chars mean={sum(chars) / len(chars):.0f} "
               f"| words mean={sum(words) / len(words):.1f}")
-    print(f"[{tag}] {length_note}")
 
     # Guarantee globally-unique ids (load_questions enforces this).
     seen: set = set()

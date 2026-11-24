@@ -50,7 +50,7 @@ def run_build(tmp_path, data, per_class=0, seed=0, name="out.jsonl"):
     build_and_write(
         data, tag="test", label_fn=lambda ex: ex.get("label"), id_keys=("id",),
         order_labels=sorted, per_class=per_class, seed=seed, output=output,
-        too_few_hint="hint", length_note="note",
+        too_few_hint="hint",
     )
     with open(output, encoding="utf-8") as fh:
         return output, [json.loads(line) for line in fh]
@@ -97,7 +97,7 @@ def test_build_and_write_needs_two_labels(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# MuSiQue labels                                                              #
+# MuSiQue labels: 2hop / 3hop / 4hop                                          #
 # --------------------------------------------------------------------------- #
 def test_musique_n_hops_decomposition_then_id_fallback():
     assert musique.n_hops({"question_decomposition": [1, 2, 3]}) == 3
@@ -105,17 +105,14 @@ def test_musique_n_hops_decomposition_then_id_fallback():
     assert musique.n_hops({}) == 0
 
 
-def test_musique_make_label_schemes():
-    assert musique.make_label({"question_decomposition": [1, 2]},
-                              "hops_multiclass", 2, 4) == "2hop"
-    assert musique.make_label({}, "hops_multiclass", 2, 4) is None  # 0 hops
-    mk = lambda h: musique.make_label({"question_decomposition": list(range(h))},  # noqa: E731
-                                      "hops_binary", 2, 4)
-    assert (mk(2), mk(3), mk(4)) == ("easy", None, "hard")  # drop the in-between band
+def test_musique_make_label():
+    assert musique.make_label({"question_decomposition": [1, 2]}) == "2hop"
+    assert musique.make_label({"id": "3hop1__x"}) == "3hop"
+    assert musique.make_label({}) is None  # unknown hop count -> dropped
 
 
 # --------------------------------------------------------------------------- #
-# 2Wiki labels                                                                #
+# 2Wiki labels: easy (<= 2 evidence items) / hard (>= 4), 3 dropped           #
 # --------------------------------------------------------------------------- #
 def test_2wiki_n_hops_key_precedence():
     assert wiki.n_hops({"evidences": [1, 2], "supporting_facts": [1, 2, 3, 4]}) == 2
@@ -123,24 +120,18 @@ def test_2wiki_n_hops_key_precedence():
     assert wiki.n_hops({}) == 0
 
 
-def test_2wiki_make_label_schemes():
-    assert wiki.make_label({"type": "comparison"}, "type", 2, 4) == "comparison"
-    assert wiki.make_label({"evidences": [1, 2]}, "hops_multiclass", 2, 4) == "2hop"
-    assert wiki.make_label({"evidences": [1, 2]}, "hops_binary", 2, 4) == "easy"
-    assert wiki.make_label({"evidences": [1, 2, 3]}, "hops_binary", 2, 4) is None
+def test_2wiki_make_label():
+    mk = lambda h: wiki.make_label({"evidences": list(range(h))})  # noqa: E731
+    assert [mk(h) for h in (1, 2, 3, 4, 5)] == ["easy", "easy", None, "hard", "hard"]
 
 
 # --------------------------------------------------------------------------- #
-# HotpotQA labels                                                             #
+# HotpotQA labels: native level                                               #
 # --------------------------------------------------------------------------- #
-def test_hotpot_make_label_schemes():
-    assert hotpot.make_label({"level": " Hard "}, "level") == "hard"  # normalized
-    assert hotpot.make_label({}, "level") is None
-    assert hotpot.make_label({"level": "medium"}, "level_binary") is None  # dropped
-    assert hotpot.make_label({"level": "easy"}, "level_binary") == "easy"
-    assert hotpot.make_label({"type": "bridge"}, "type") == "bridge"
-    with pytest.raises(ValueError, match="unknown --label-scheme"):
-        hotpot.make_label({}, "nope")
+def test_hotpot_make_label():
+    assert hotpot.make_label({"level": " Hard "}) == "hard"  # normalized
+    assert hotpot.make_label({"level": "medium"}) == "medium"
+    assert hotpot.make_label({}) is None
 
 
 def test_hotpot_display_order():

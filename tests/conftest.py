@@ -1,13 +1,12 @@
-"""Shared pytest setup for the FATHOM test suite.
+"""Shared pytest setup.
 
 Path setup: the repo root goes onto ``sys.path`` so ``from src...`` resolves
 (mirroring what ``main.py`` / ``analyze.py`` rely on).
 
 Fixtures: factories for planted-signal activations and fabricated run
 directories, shared by every probe-tier test. The suite needs only
-numpy + matplotlib (same as the analysis tiers); tests that touch torch or
-transformers ``importorskip`` them individually, so the whole suite passes both
-on a GPU-free laptop and on the cluster.
+numpy + matplotlib (same as the analysis); tests that touch torch or
+transformers ``importorskip`` them individually, so the suite runs anywhere.
 """
 
 import json
@@ -16,6 +15,11 @@ import sys
 
 import numpy as np
 import pytest
+
+# The fabricated runs name a model ("synth-model") that does not exist; keep
+# the tokenizer lookup for the token-count feature offline so it fails fast.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -55,8 +59,8 @@ def planted_xy():
 def make_run(tmp_path):
     """Factory fabricating a finished run directory under ``tmp_path``.
 
-    Writes ``metadata.jsonl`` (one record per row of ``X``, with the keys the
-    tiers read: id / label / original_question / nodes / layers),
+    Writes ``metadata.jsonl`` (one record per row of ``X``, with the keys
+    ``main.py`` writes: id / label / original_question / pooling / layers),
     ``activations/<id>.npz`` (key ``"root"``), and ``run_config.json``.
     Returns the run dir as a str. ``skip_npz`` / ``drop_root_key`` name ids
     whose npz is absent / lacks the ``"root"`` key (for missing-file paths);
@@ -75,7 +79,7 @@ def make_run(tmp_path):
                             else f"synthetic question number {i}?")
                 fh.write(json.dumps({"id": qid, "label": str(y[i]),
                                      "original_question": question,
-                                     "nodes": [], "layers": layers}) + "\n")
+                                     "pooling": "last_token", "layers": layers}) + "\n")
                 if qid in skip_npz:
                     continue
                 arrays = ({"not_root": X[i]} if qid in drop_root_key

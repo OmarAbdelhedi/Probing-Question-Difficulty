@@ -1,8 +1,7 @@
 """Tests for src/activations.py: layer-spec resolution and mask-aware pooling.
 
-Needs torch (CPU only -- tiny tensors, no model); skips on a torch-free box.
-``extract_activations`` itself needs a real model and is covered by
-src/sanity_checks.py on the cluster.
+Needs torch (CPU only -- tiny tensors, no model); skips without it.
+``extract_activations`` is exercised end to end in test_pipeline.py.
 """
 
 import pytest

@@ -1,12 +1,9 @@
-# FATHOM experiment parameters ONLY. No paths live here (paths come from the CLI).
+# Activation-extraction settings for main.py. Paths come from the command line.
 
-model_name: "Qwen/Qwen2.5-32B-Instruct"  # DEFAULT single HF causal LM used for BOTH decomposition and activation extraction; override per-run with `main.py --model` (the run scripts pass MODEL=<hf-id>, see scripts/model_env.sh)
-dtype: "bfloat16"          # compute dtype: float16 / bfloat16 / float32. bf16 is Qwen2.5's native dtype and the right default for a 32B model on H100; fp16 falls back to fp32 on CPU
-device: "cuda"              # default device: cuda or cpu (falls back to cpu if CUDA is unavailable)
-pooling: "last_token"       # hidden-state pooling: "last_token" (last non-pad token) or "mean" (mask-weighted)
-layers: "all"               # which transformer layers to keep: "all" or an explicit list of layer indices
-max_depth: 3                # recursion hard cap: a node at depth >= max_depth stops with stop_reason="max_depth"
-node_budget: 64             # per-question circuit breaker on total node count -> stop_reason="budget"
-decompose_context: "isolated"  # "isolated" decomposes each child without its parent; "with_parent" shows parent context
-seed: 0                     # global RNG seed for torch/numpy/random (deterministic, greedy decoding)
-batch_size: 16             # number of node texts per forward pass during activation extraction
+model_name: "Qwen/Qwen2.5-32B-Instruct"  # default model; override per run with `main.py --model`
+dtype: "bfloat16"       # float16 | bfloat16 | float32 (float16 on CPU falls back to float32)
+device: "cuda"          # cuda | cpu (falls back to cpu when CUDA is unavailable)
+pooling: "last_token"   # last_token (last non-padding token) | mean (mask-weighted mean)
+layers: "all"           # "all" hidden states (index 0 = embeddings) or a list of indices
+seed: 0                 # seeds python / numpy / torch
+batch_size: 16          # questions per forward pass

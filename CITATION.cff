@@ -1,0 +1,59 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite the paper below."
+title: "Probing Compositional Question Difficulty in Language Model Representations"
+abstract: >-
+  Code for a study of whether a question's
+  compositional difficulty is linearly decodable from a frozen instruction-tuned
+  LLM's hidden states of the question itself, before any answer is produced.
+  Three models (Qwen2.5-32B, Mistral-24B, Gemma-27B) are crossed with three
+  multi-hop QA benchmarks (2WikiMultiHopQA, HotpotQA, MuSiQue) at 300 questions
+  per class.
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/OmarAbdelhedi/probing-question-difficulty"
+authors:
+  - family-names: Abdelhedi
+    given-names: Omar
+  - family-names: Heidari
+    given-names: Omid Reza
+  - family-names: Chaari
+    given-names: Sahar
+  - family-names: Azzam
+    given-names: Diaa
+  - family-names: Hamed
+    given-names: Manar
+  - family-names: Zhu
+    given-names: Xiang Chen
+  - family-names: Yaakoubi
+    given-names: Yassine
+keywords:
+  - interpretability
+  - linear probing
+  - multi-hop question answering
+  - compositional reasoning
+  - large language models
+preferred-citation:
+  type: conference-paper
+  title: "Probing Compositional Question Difficulty in Language Model Representations"
+  year: 2026
+  conference:
+    name: "IEEE International Conference on Artificial Intelligence, Data Science and Innovative Technologies (AIDIST)"
+  collection-title: "Proceedings of the IEEE International Conference on Artificial Intelligence, Data Science and Innovative Technologies (AIDIST)"
+  publisher:
+    name: "IEEE"
+  # Add doi, start and end (pages) once the proceedings are published.
+  authors:
+    - family-names: Abdelhedi
+      given-names: Omar
+    - family-names: Heidari
+      given-names: Omid Reza
+    - family-names: Chaari
+      given-names: Sahar
+    - family-names: Azzam
+      given-names: Diaa
+    - family-names: Hamed
+      given-names: Manar
+    - family-names: Zhu
+      given-names: Xiang Chen
+    - family-names: Yaakoubi
+      given-names: Yassine
